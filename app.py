@@ -4,7 +4,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 from translator import TranslationService, SUPPORTED_LANGUAGES
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.urandom(24)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 
 # Initialize translation service
@@ -150,4 +150,6 @@ def cleanup_temp_files(exception=None):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV', 'production') == 'development'
+    app.run(debug=debug, host='0.0.0.0', port=port)

@@ -1,6 +1,7 @@
 import os
 import tempfile
-from googletrans import Translator
+import requests
+import json
 from gtts import gTTS
 
 # Supported languages dictionary: code -> language name
@@ -42,7 +43,6 @@ SUPPORTED_LANGUAGES = {
     'ha': 'Hausa',
     'haw': 'Hawaiian',
     'iw': 'Hebrew',
-    'he': 'Hebrew',
     'hi': 'Hindi',
     'hmn': 'Hmong',
     'hu': 'Hungarian',
@@ -118,10 +118,13 @@ SUPPORTED_LANGUAGES = {
 
 
 class TranslationService:
-    """Service class for handling language translation operations."""
+    """Service class for handling language translation operations using LibreTranslate API."""
 
     def __init__(self):
-        self.translator = Translator()
+        # Using the public LibreTranslate API (no API key needed)
+        self.api_url = "https://libretranslate.com/translate"
+        self.detect_url = "https://libretranslate.com/detect"
+        self.languages_url = "https://libretranslate.com/languages"
 
     def translate_text(self, text, src_lang='auto', dest_lang='en'):
         """
@@ -143,9 +146,56 @@ class TranslationService:
             }
 
         try:
-            result = self.translator.translate(text, src=src_lang, dest=dest_lang)
+            # For auto-detect, first detect the language
+            detected_src = src_lang
+            if src_lang == 'auto':
+                detection = self.detect_language(text)
+                if detection['success']:
+                    detected_src = detection['language']
+                else:
+                    detected_src = 'en'
+
+            # Make translation request
+            payload = {
+                'q': text,
+                'source': detected_src,
+                'target': dest_lang,
+                'format': 'text'
+            }
             
-            response = {
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(self.api_url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                result = response.json()
+                translated_text = result.get('translatedText', '')
+                
+                return {
+                    'success': True,
+                    'original_text': text,
+                    'translated_text': translated_text,
+                    'source_language': detected_src,
+                    'destination_language': dest_lang,
+                    'source_language_name': SUPPORTED_LANGUAGES.get(detected_src, detected_src),
+                    'destination_language_name': SUPPORTED_LANGUAGES.get(dest_lang, dest_lang),
+                    'pronunciation': None
+                }
+            else:
+                # Fallback: try Google Translate via googletrans
+                return self._fallback_translate(text, src_lang, dest_lang)
+
+        except Exception as e:
+            # Fallback to googletrans if LibreTranslate fails
+            return self._fallback_translate(text, src_lang, dest_lang)
+
+    def _fallback_translate(self, text, src_lang='auto', dest_lang='en'):
+        """Fallback translation using googletrans."""
+        try:
+            from googletrans import Translator
+            translator = Translator()
+            result = translator.translate(text, src=src_lang, dest=dest_lang)
+            
+            return {
                 'success': True,
                 'original_text': text,
                 'translated_text': result.text,
@@ -155,13 +205,10 @@ class TranslationService:
                 'destination_language_name': SUPPORTED_LANGUAGES.get(dest_lang, dest_lang),
                 'pronunciation': result.pronunciation if hasattr(result, 'pronunciation') else None
             }
-            
-            return response
-
-        except Exception as e:
+        except Exception as e2:
             return {
                 'success': False,
-                'error': f'Translation failed: {str(e)}'
+                'error': f'Translation failed: {str(e2)}'
             }
 
     def detect_language(self, text):
@@ -181,7 +228,33 @@ class TranslationService:
             }
 
         try:
-            detection = self.translator.detect(text)
+            payload = {'q': text}
+            headers = {'Content-Type': 'application/json'}
+            response = requests.post(self.detect_url, json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                results = response.json()
+                if results and len(results) > 0:
+                    best = results[0]
+                    return {
+                        'success': True,
+                        'language': best.get('language', 'en'),
+                        'language_name': SUPPORTED_LANGUAGES.get(best.get('language', 'en'), 'English'),
+                        'confidence': best.get('confidence', 0)
+                    }
+            
+            # Fallback to googletrans
+            return self._fallback_detect(text)
+
+        except Exception as e:
+            return self._fallback_detect(text)
+
+    def _fallback_detect(self, text):
+        """Fallback language detection using googletrans."""
+        try:
+            from googletrans import Translator
+            translator = Translator()
+            detection = translator.detect(text)
             return {
                 'success': True,
                 'language': detection.lang,
