@@ -118,13 +118,23 @@ SUPPORTED_LANGUAGES = {
 
 
 class TranslationService:
-    """Service class for handling language translation operations using LibreTranslate API."""
+    """Service class for handling language translation operations using Google Translate API."""
 
     def __init__(self):
-        # Using the public LibreTranslate API (no API key needed)
-        self.api_url = "https://libretranslate.com/translate"
-        self.detect_url = "https://libretranslate.com/detect"
-        self.languages_url = "https://libretranslate.com/languages"
+        # Google Translate API endpoints (same ones googletrans uses internally)
+        self.translate_url = "https://translate.googleapis.com/translate_a/single"
+        self.detect_url = "https://translate.googleapis.com/translate_a/detect"
+
+    def _normalize_lang_code(self, lang_code):
+        """Normalize language codes for Google Translate API compatibility."""
+        # Map common codes that differ between our list and Google's
+        mapping = {
+            'zh-cn': 'zh-CN',
+            'zh-tw': 'zh-TW',
+            'iw': 'iw',  # Hebrew
+            'jw': 'jw',  # Javanese
+        }
+        return mapping.get(lang_code, lang_code)
 
     def translate_text(self, text, src_lang='auto', dest_lang='en'):
         """
@@ -146,29 +156,29 @@ class TranslationService:
             }
 
         try:
-            # For auto-detect, first detect the language
-            detected_src = src_lang
-            if src_lang == 'auto':
-                detection = self.detect_language(text)
-                if detection['success']:
-                    detected_src = detection['language']
-                else:
-                    detected_src = 'en'
-
-            # Make translation request
-            payload = {
-                'q': text,
-                'source': detected_src,
-                'target': dest_lang,
-                'format': 'text'
+            params = {
+                'client': 'gtx',
+                'sl': self._normalize_lang_code(src_lang),
+                'tl': self._normalize_lang_code(dest_lang),
+                'dt': 't',
+                'q': text
             }
             
-            headers = {'Content-Type': 'application/json'}
-            response = requests.post(self.api_url, json=payload, headers=headers, timeout=10)
+            response = requests.get(self.translate_url, params=params, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
-                translated_text = result.get('translatedText', '')
+                # Parse Google Translate response format
+                translated_text = ''
+                if result and len(result) > 0 and result[0]:
+                    for sentence in result[0]:
+                        if sentence and len(sentence) > 0 and sentence[0]:
+                            translated_text += sentence[0]
+                
+                # Detect language from response when auto is used
+                detected_src = src_lang
+                if src_lang == 'auto' and result and len(result) > 2 and result[2]:
+                    detected_src = result[2]
                 
                 return {
                     'success': True,
@@ -183,7 +193,7 @@ class TranslationService:
             else:
                 return {
                     'success': False,
-                    'error': f'Translation API returned status {response.status_code}: {response.text}'
+                    'error': f'Translation service returned status {response.status_code}'
                 }
 
         except requests.exceptions.Timeout:
@@ -219,24 +229,31 @@ class TranslationService:
             }
 
         try:
-            payload = {'q': text}
-            headers = {'Content-Type': 'application/json'}
-            response = requests.post(self.detect_url, json=payload, headers=headers, timeout=10)
+            params = {
+                'client': 'gtx',
+                'sl': 'auto',
+                'tl': 'en',
+                'dt': 't',
+                'q': text
+            }
+            
+            response = requests.get(self.translate_url, params=params, timeout=10)
             
             if response.status_code == 200:
-                results = response.json()
-                if results and len(results) > 0:
-                    best = results[0]
+                result = response.json()
+                if result and len(result) > 2 and result[2]:
+                    detected_lang = result[2]
+                    confidence = 1.0
                     return {
                         'success': True,
-                        'language': best.get('language', 'en'),
-                        'language_name': SUPPORTED_LANGUAGES.get(best.get('language', 'en'), 'English'),
-                        'confidence': best.get('confidence', 0)
+                        'language': detected_lang,
+                        'language_name': SUPPORTED_LANGUAGES.get(detected_lang, detected_lang),
+                        'confidence': confidence
                     }
             
             return {
                 'success': False,
-                'error': f'Detection API returned status {response.status_code}: {response.text}'
+                'error': 'Could not detect language from text'
             }
 
         except requests.exceptions.Timeout:
