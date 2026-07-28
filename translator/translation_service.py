@@ -144,16 +144,20 @@ class TranslationService:
 
     def translate_text(self, text, src_lang='auto', dest_lang='en'):
         """
-        Translate text using MyMemory API.
+        Translate text using MyMemory API (or Lingva fallback for auto-detection).
         """
         if not text or not text.strip():
             return {'success': False, 'error': 'Please enter text to translate'}
+
+        # MyMemory doesn't support 'auto' as source - use Lingva which does
+        if src_lang == 'auto':
+            return self._translate_via_lingva(text, src_lang, dest_lang)
 
         try:
             params = {
                 'q': text,
                 'langpair': f'{self._map_lang(src_lang)}|{self._map_lang(dest_lang)}',
-                'de': 'translator@example.com'  # Free tier requires email for higher limits
+                'de': 'translator@example.com'
             }
             
             response = requests.get(self.translate_url, params=params, headers=self.headers, timeout=10)
@@ -165,11 +169,9 @@ class TranslationService:
                     translated_text = data.get('responseData', {}).get('translatedText', '')
                     detected_src = data.get('responseData', {}).get('detectedLanguage', src_lang)
                     
-                    # Handle case where source wasn't detected
                     if not detected_src or detected_src == 'und':
                         detected_src = src_lang
                     
-                    # MyMemory sometimes returns the same text if translation failed
                     if translated_text and translated_text.lower() != text.lower():
                         return {
                             'success': True,
@@ -182,7 +184,6 @@ class TranslationService:
                             'pronunciation': None
                         }
                     else:
-                        # Translation returned same text, try alternative method
                         return self._translate_via_lingva(text, src_lang, dest_lang)
                 else:
                     error_msg = data.get('responseDetails', '')
