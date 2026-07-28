@@ -1,5 +1,7 @@
 import os
 import tempfile
+import time
+import random
 import requests
 import json
 from gtts import gTTS
@@ -124,6 +126,13 @@ class TranslationService:
         # Google Translate API endpoints (same ones googletrans uses internally)
         self.translate_url = "https://translate.googleapis.com/translate_a/single"
         self.detect_url = "https://translate.googleapis.com/translate_a/detect"
+        # Browser-like headers to avoid rate limiting
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://translate.google.com/',
+        }
 
     def _normalize_lang_code(self, lang_code):
         """Normalize language codes for Google Translate API compatibility."""
@@ -135,6 +144,36 @@ class TranslationService:
             'jw': 'jw',  # Javanese
         }
         return mapping.get(lang_code, lang_code)
+
+    def _make_request_with_retry(self, url, params, max_retries=3):
+        """Make a request with retry logic and exponential backoff for rate limiting."""
+        for attempt in range(max_retries):
+            response = requests.get(url, params=params, headers=self.headers, timeout=10)
+            
+            if response.status_code == 429:
+                # Rate limited - wait with exponential backoff + jitter
+                wait_time = (2 ** attempt) + random.uniform(0, 1)
+                time.sleep(wait_time)
+                continue
+            
+            return response
+        
+        # All retries exhausted
+        return response
+
+    def _parse_google_translate_response(self, result, src_lang):
+        """Parse Google Translate API JSON response."""
+        translated_text = ''
+        if result and len(result) > 0 and result[0]:
+            for sentence in result[0]:
+                if sentence and len(sentence) > 0 and sentence[0]:
+                    translated_text += sentence[0]
+        
+        detected_src = src_lang
+        if src_lang == 'auto' and result and len(result) > 2 and result[2]:
+            detected_src = result[2]
+        
+        return translated_text, detected_src
 
     def translate_text(self, text, src_lang='auto', dest_lang='en'):
         """
@@ -164,21 +203,11 @@ class TranslationService:
                 'q': text
             }
             
-            response = requests.get(self.translate_url, params=params, timeout=10)
+            response = self._make_request_with_retry(self.translate_url, params)
             
             if response.status_code == 200:
                 result = response.json()
-                # Parse Google Translate response format
-                translated_text = ''
-                if result and len(result) > 0 and result[0]:
-                    for sentence in result[0]:
-                        if sentence and len(sentence) > 0 and sentence[0]:
-                            translated_text += sentence[0]
-                
-                # Detect language from response when auto is used
-                detected_src = src_lang
-                if src_lang == 'auto' and result and len(result) > 2 and result[2]:
-                    detected_src = result[2]
+                translated_text, detected_src = self._parse_google_translate_response(result, src_lang)
                 
                 return {
                     'success': True,
@@ -189,6 +218,11 @@ class TranslationService:
                     'source_language_name': SUPPORTED_LANGUAGES.get(detected_src, detected_src),
                     'destination_language_name': SUPPORTED_LANGUAGES.get(dest_lang, dest_lang),
                     'pronunciation': None
+                }
+            elif response.status_code == 429:
+                return {
+                    'success': False,
+                    'error': 'Translation service is temporarily unavailable due to high demand. Please try again in a moment.'
                 }
             else:
                 return {
@@ -237,7 +271,7 @@ class TranslationService:
                 'q': text
             }
             
-            response = requests.get(self.translate_url, params=params, timeout=10)
+            response = self._make_request_with_retry(self.translate_url, params)
             
             if response.status_code == 200:
                 result = response.json()
@@ -250,6 +284,12 @@ class TranslationService:
                         'language_name': SUPPORTED_LANGUAGES.get(detected_lang, detected_lang),
                         'confidence': confidence
                     }
+            
+            if response.status_code == 429:
+                return {
+                    'success': False,
+                    'error': 'Detection service is temporarily unavailable. Please try again.'
+                }
             
             return {
                 'success': False,
