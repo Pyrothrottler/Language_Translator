@@ -181,34 +181,25 @@ class TranslationService:
                     'pronunciation': None
                 }
             else:
-                # Fallback: try Google Translate via googletrans
-                return self._fallback_translate(text, src_lang, dest_lang)
+                return {
+                    'success': False,
+                    'error': f'Translation API returned status {response.status_code}: {response.text}'
+                }
 
-        except Exception as e:
-            # Fallback to googletrans if LibreTranslate fails
-            return self._fallback_translate(text, src_lang, dest_lang)
-
-    def _fallback_translate(self, text, src_lang='auto', dest_lang='en'):
-        """Fallback translation using googletrans."""
-        try:
-            from googletrans import Translator
-            translator = Translator()
-            result = translator.translate(text, src=src_lang, dest=dest_lang)
-            
-            return {
-                'success': True,
-                'original_text': text,
-                'translated_text': result.text,
-                'source_language': result.src,
-                'destination_language': dest_lang,
-                'source_language_name': SUPPORTED_LANGUAGES.get(result.src, result.src),
-                'destination_language_name': SUPPORTED_LANGUAGES.get(dest_lang, dest_lang),
-                'pronunciation': result.pronunciation if hasattr(result, 'pronunciation') else None
-            }
-        except Exception as e2:
+        except requests.exceptions.Timeout:
             return {
                 'success': False,
-                'error': f'Translation failed: {str(e2)}'
+                'error': 'Translation request timed out. Please try again.'
+            }
+        except requests.exceptions.ConnectionError:
+            return {
+                'success': False,
+                'error': 'Could not connect to translation service. Check your internet connection.'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Translation failed: {str(e)}'
             }
 
     def detect_language(self, text):
@@ -243,23 +234,20 @@ class TranslationService:
                         'confidence': best.get('confidence', 0)
                     }
             
-            # Fallback to googletrans
-            return self._fallback_detect(text)
-
-        except Exception as e:
-            return self._fallback_detect(text)
-
-    def _fallback_detect(self, text):
-        """Fallback language detection using googletrans."""
-        try:
-            from googletrans import Translator
-            translator = Translator()
-            detection = translator.detect(text)
             return {
-                'success': True,
-                'language': detection.lang,
-                'language_name': SUPPORTED_LANGUAGES.get(detection.lang, detection.lang),
-                'confidence': detection.confidence
+                'success': False,
+                'error': f'Detection API returned status {response.status_code}: {response.text}'
+            }
+
+        except requests.exceptions.Timeout:
+            return {
+                'success': False,
+                'error': 'Detection request timed out. Please try again.'
+            }
+        except requests.exceptions.ConnectionError:
+            return {
+                'success': False,
+                'error': 'Could not connect to detection service. Check your internet connection.'
             }
         except Exception as e:
             return {
